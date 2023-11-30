@@ -306,6 +306,7 @@ array([ True,  True,  True,  True,  True])
 
 ## expand is a map from hall basis keys to tensors
 def expand(k, width, depth):
+    print("width: {}, depth: {}".format(width,depth))
     _expand = lambda k: expand(k, width, depth)
     _tensor_multiply = lambda k1, k2: tjl_dense_numpy_tensor.tensor_multiply(
         k1, k2, depth
@@ -315,6 +316,9 @@ def expand(k, width, depth):
         hall_set, degrees, degree_boundaries, reverse_map, width = hall_basis(
             width, depth
         )
+        print("k:{}".format(k))
+        print("hall set:")
+        print(hall_set)
         (k1, k2) = hall_set[k]
         if k1:
             return _tensor_sub(
@@ -341,6 +345,7 @@ def l2t(arg, width, depth):
 True
 >>> 
     """
+    print("len arg:{}".format(len(arg)))
     _expand = lambda k: expand(k, width, depth)
     _tensor_add = tjl_dense_numpy_tensor.tensor_add
     ans = tjl_dense_numpy_tensor.zero(width)

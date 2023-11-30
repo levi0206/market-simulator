@@ -15,3 +15,6 @@ def leadlag(X):
     lead.append(X[-1])
 
     return np.c_[lag, lead]
+    # X = np.repeat(X, 2)
+    
+    # return np.vstack((X[1:], X[:-1]))

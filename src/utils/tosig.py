@@ -1,6 +1,6 @@
 import doctest
 from esig import tosig as esig
-from esig import tests as tests
+# from esig import tests as tests
 import numpy as np
 from . import tjl_dense_numpy_tensor as te
 from . import tjl_hall_numpy_lie as li
@@ -313,7 +313,7 @@ def tensor2lie(tensor):
 
 
 def logsig2sig(logsig, width, depth):
-    L = {i + 1: l for i, l in enumerate(logsig)}
+    L = {i+1: l for i, l in enumerate(logsig)} 
 
     tensor = lie2tensor(L, width, depth)[1:]
 

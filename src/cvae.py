@@ -1,108 +1,151 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
 import numpy as np
-import matplotlib.pyplot as plt
 from sklearn import utils
-from tqdm.auto import tqdm
-import tensorflow as tf
 
-class CVAE(object):
-    """Conditional Variational Auto Encoder (CVAE)."""
+class CVAE(nn.Module):
+    def __init__(self, data, data_cond, latent_dim, hidden_dim=50, alpha=0.2):
+        super(CVAE,self).__init__()
+        if not torch.is_tensor(data):
+            self.data = torch.tensor(data,dtype=torch.float32).squeeze()
+        else:
+            self.data = data.squeeze()
+        if not torch.is_tensor(data_cond):
+            self.data_cond = torch.tensor(data_cond,dtype=torch.float32)
+        else:
+            self.data_cond = data_cond
 
-    def __init__(self, n_latent, n_hidden=50, alpha=0.2):
-        self.n_latent = n_latent
-        self.n_hidden = n_hidden
-        self.alpha = alpha
+        if len(data_cond.shape)>2:
+            self.data_cond = self.data_cond.squeeze()
 
-    def lrelu(self, x, alpha=0.3):
-        return tf.maximum(x, tf.multiply(x, alpha))
+        # Check input shape
+        assert len(self.data.shape)==2, "Shape of input data tensor should be 2"
+        assert len(self.data_cond.shape)==2, "Shape of input condition tensor should be 2"
 
-    def encoder(self, X_in, cond, input_dim):
-        with tf.variable_scope("encoder", reuse=None):
-            x = tf.concat([X_in, cond], axis=1)
-            x = tf.contrib.layers.flatten(x)
-            x = tf.layers.dense(x, units=self.n_hidden, activation=self.lrelu)
-            mn = tf.layers.dense(x, units=self.n_latent, activation=self.lrelu)
-            sd = tf.layers.dense(x, units=self.n_latent, activation=self.lrelu)
-            epsilon = tf.random_normal(tf.stack([tf.shape(x)[0], self.n_latent]))
-            z = mn + tf.multiply(epsilon, tf.exp(sd / 2.))
-
-            return z, mn, sd
+        print("Data shape:{}".format(self.data.shape))
+        print("Data condition shape:{}".format(self.data_cond.shape))
     
-    def decoder(self, sampled_z, cond, input_dim):
-        with tf.variable_scope("decoder", reuse=None):
-            x = tf.concat([sampled_z, cond], axis=1)
-            x = tf.layers.dense(x, units=self.n_hidden, activation=self.lrelu)
-            x = tf.layers.dense(x, units=input_dim, activation=tf.nn.sigmoid)
-            x = tf.reshape(x, shape=[-1, input_dim])
-
-            return x
-
-    def train(self, data, data_cond, n_epochs=10000, learning_rate=0.005,
-              show_progress=False):
-
-        data = utils.as_float_array(data)
-        data_cond = utils.as_float_array(data_cond)
-
-        if len(data_cond.shape) == 1:
-            data_cond = data_cond.reshape(-1, 1)
-
-        assert data.max() <= 1. and data.min() >=0., \
+        assert self.data.max() <= 1. and self.data.min() >=0., \
+            "All features of the dataset must be between 0 and 1."
+        assert self.data_cond.max() <= 1. and self.data_cond.min() >=0., \
             "All features of the dataset must be between 0 and 1."
 
-        tf.reset_default_graph()
+        self.input_dim = self.data.shape[1]
+        self.latent_dim = latent_dim
+        self.hidden_dim = hidden_dim
+        self.alpha = alpha
 
-        input_dim = data.shape[1]
-        dim_cond = data_cond.shape[1]
+        self.encoder = nn.Sequential(
+            nn.Linear(self.data.shape[1]+self.data_cond.shape[1],hidden_dim*2),
+            nn.LeakyReLU(0.3),
+            nn.Linear(hidden_dim*2,hidden_dim),
+            nn.LeakyReLU(0.3),
+        )
 
-        X_in = tf.placeholder(dtype=tf.float32, shape=[None, input_dim],
-                              name="X")
-                            
-        self.cond = tf.placeholder(dtype=tf.float32, shape=[None, dim_cond],
-                                   name="c")
-        Y = tf.placeholder(dtype=tf.float32, shape=[None, input_dim],
-                           name="Y")
+        self.encode_fc = nn.Linear(hidden_dim,latent_dim)
 
-        Y_flat = Y
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim + self.data_cond.shape[1], hidden_dim*2),
+            nn.LeakyReLU(0.3),
+            nn.Linear(hidden_dim*2, self.hidden_dim),
+            nn.LeakyReLU(0.3),
+            nn.Linear(hidden_dim, self.input_dim),
+            nn.Sigmoid(),
+        )
 
-        self.sampled, mn, sd = self.encoder(X_in, self.cond, input_dim=input_dim)
-        self.dec = self.decoder(self.sampled, self.cond, input_dim=input_dim)
+        self.MODEL_NAME = 'model.pth'
 
-        unreshaped = tf.reshape(self.dec, [-1, input_dim])
-        decoded_loss = tf.reduce_sum(tf.squared_difference(unreshaped, Y_flat), 1)
-        latent_loss = -0.5 * tf.reduce_sum(1. + sd - tf.square(mn) - tf.exp(sd), 1)
+    def encode(self,x):
+        x = torch.cat((x, self.data_cond), dim=1)  
+        x = x.flatten(start_dim=1)  
+        # print("concatenated tensor shape:{}".format(x.shape))
+        x = self.encoder(x)  
+        mu = nn.LeakyReLU(0.3)(self.encode_fc(x))  
+        sigma = nn.LeakyReLU(0.3)(self.encode_fc(x)) 
 
-        self.loss = tf.reduce_mean((1 - self.alpha) * decoded_loss + self.alpha * latent_loss)
+        epsilon = torch.randn(mu.shape)
+        z = mu + torch.mul(epsilon, torch.exp(sigma/2.)) 
 
-        optimizer = tf.train.AdamOptimizer(learning_rate).minimize(self.loss)
-        self.sess = tf.Session()
-        self.sess.run(tf.global_variables_initializer())
+        return z, mu, sigma
+    
+    def decode(self,z,cond):
+        z = torch.cat([z, cond], dim=1)  
+        reconstruct = self.decoder(z)             
+        reconstruct = reconstruct.view(-1,self.input_dim)  
 
-        for i in tqdm(range(n_epochs), desc="Training"):
-            self.sess.run(optimizer, feed_dict={X_in: data, self.cond: data_cond, Y: data})
-            if not i % 1000 and show_progress:
-                ls, d = self.sess.run([self.loss, self.dec], feed_dict={X_in: data, self.cond: data_cond, Y: data})
+        return reconstruct
+    
+    def forward(self,x):
+        latent, mu, sigma = self.encode(x)
+        # latent = torch.cat([latent, self.data_cond], dim=1) 
+        reconstruct = self.decode(latent,self.data_cond)
+        return reconstruct
 
-                projections = np.random.randint(0, data.shape[1], size=2)
+    def customloss(self,x,mu,logsigma):
+        reconstruct_loss = F.mse_loss(x, self.data,reduction='sum')
+        KLD = - 0.5 * torch.sum(1 + logsigma - mu.pow(2) - logsigma.exp())
+        loss = (1-self.alpha)*reconstruct_loss + self.alpha*KLD
+        
+        return loss
+    
+    def train(self, n_epochs=10000, learning_rate=0.005):
+        loss_record = []
 
-                plt.scatter(data[:, projections[0]], data[:, projections[1]])
-                plt.scatter(d[:, projections[0]], d[:, projections[1]])
-                plt.show()
-                
-                print(i, ls)
+        # Early stop
+        stop = 0
+        def is_stop(stop):
+            if stop > 1000:
+                return True
+            else:
+                return False
+            
+        optimizer = optim.Adam(self.parameters(), lr=learning_rate)
+
+        for epoch in range(n_epochs):
+            optimizer.zero_grad()
+            latent, mu, logsigma = self.encode(self.data)
+            reconstruct = self.decode(latent,self.data_cond)
+            loss = self.customloss(reconstruct,mu,logsigma)
+            loss_record.append(loss.item())
+            loss.backward()
+            optimizer.step()
+
+            if loss.item()==min(loss_record):
+                print("Epoch {}: {:.4f}".format(epoch+1,loss.item()))
+                print("saving model with loss {:.4f}".format(loss.item()))
+                torch.save(self.state_dict(), "%s" % self.MODEL_NAME)
+                stop = 0
+
+            if is_stop(stop):
+                print("Early stop at {}".format(epoch+1))
+                break
+            else:
+                stop += 1
 
     def generate(self, cond, n_samples=None):
+
+        self.load_state_dict(torch.load(self.MODEL_NAME))
+        
         cond = utils.as_float_array(cond)
 
         if n_samples is not None:
-            randoms = np.random.normal(0, 1, size=(n_samples, self.n_latent))
+            randoms = torch.rand(n_samples,self.latent_dim)
             cond = [list(cond)] * n_samples
+            cond = torch.tensor(cond,dtype=torch.float32)
+            cond = cond.view(n_samples,self.data_cond.shape[1])
         else:
-            randoms = np.random.normal(0, 1, size=(1, self.n_latent))
-            cond = [list(cond)]
+            randoms = torch.rand(1,self.latent_dim)
+            cond = [list(cond)] 
+            cond = torch.tensor(cond,dtype=torch.float32)
+            cond = cond.view(1,self.data_cond.shape[1])
 
-        samples = self.sess.run(self.dec, feed_dict={self.sampled: randoms, self.cond: cond})
+        with torch.no_grad():
+            z = torch.cat((randoms, cond), dim=1)
+            generated_samples = self.decoder(z)
 
         if n_samples is None:
-            return samples[0]
+            return generated_samples[0]
 
-        return samples
-
+        return generated_samples
