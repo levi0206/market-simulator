@@ -118,7 +118,7 @@ class MarketGenerator:
         self.generator = CVAE(data=self.normalized_sigs, data_cond=self.conditions, latent_dim=8, alpha=0.003)
         self.generator.train(n_epochs=n_epochs)
 
-    def generate(self, logsig, n_samples=None, normalised=False):
+    def generate(self, logsig, n_samples=1, normalised=False):
         generated = self.generator.generate(logsig, n_samples=n_samples)
         # print("generated shape:{}".format(generated.shape))
 
