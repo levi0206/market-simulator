@@ -4,6 +4,7 @@ import torch
 import yfinance as yf
 from esig import tosig
 import signatory
+import iisignature
 from sklearn.preprocessing import MinMaxScaler
 
 from utils.leadlag import leadlag
@@ -79,7 +80,7 @@ class MarketGenerator:
             # To fit signatory input format
             # input shape: (batch,stream,channel)
             # set batch size == 1
-            path = torch.from_numpy(path).float().view(1,path_shape[0],path_shape[1])
+            # path = torch.from_numpy(path).float().view(1,path_shape[0],path_shape[1])
             self.windows.append(path)
 
         print("windows length:{}".format(len(self.windows)))
@@ -92,43 +93,39 @@ class MarketGenerator:
         if self.order:
             print("Calculate signatures...")
             print("We dropout the signatures with nan.")
-            self.orig_sig = []
-            self.normalized_sigs = []
+            self.orig_logsigs = []
+            self.normalized_logsigs = []
+            self.scaler = MinMaxScaler(feature_range=(0.00001, 0.99999))
             for path in self.windows:
 
                 # Compute signatures
-                sig = signatory.signature(path,self.order)
+                # sig = signatory.signature(path,self.order)
+                s = iisignature.prepare(12,self.order)
+                logsig = iisignature.logsig(path,s)
+                self.orig_logsigs.append(logsig)
 
-                # Minmax rescaling
-                # Remove signatures with nan
-                normalized_sig = (sig-torch.min(sig))/(torch.max(sig)-torch.min(sig))
-                if normalized_sig.max()<=1. and normalized_sig.min()>=0.:
-                    self.orig_sig.append(sig.squeeze().numpy())
-                    self.normalized_sigs.append(normalized_sig.squeeze().numpy())
-            self.orig_sig = np.array(self.orig_sig)
-            self.normalized_sigs = np.array(self.normalized_sigs)
-            print("self.orig_sig shape:{}".format(self.orig_sig.shape))
-            print("self.orig_sig element shape {}".format(self.orig_sig[1].shape))
+            self.orig_logsigs = np.array(self.orig_logsigs)
 
-        self.normalized_sigs, self.conditions = self.normalized_sigs[1:], self.normalized_sigs[:-1]
-        print("self.normalized_sigs shape:{}".format(self.normalized_sigs.shape))
+        normalized_logsigs = self.orig_logsigs
+        normalized_logsigs = self.scaler.fit_transform(normalized_logsigs)
+
+        self.logsig = np.array(normalized_logsigs)[1:]
+        self.conditions = np.array(normalized_logsigs)[:-1]
+
+        print("self.logsig shape:{}".format(self.logsig.shape))
         print("self.conditions shape:{}".format(self.conditions.shape))
 
     def train(self, n_epochs=10000):
-        self.generator = CVAE(data=self.normalized_sigs, data_cond=self.conditions, latent_dim=8, alpha=0.003)
+        self.generator = CVAE(data=self.logsig, data_cond=self.conditions, latent_dim=8, alpha=0.003)
         self.generator.train(n_epochs=n_epochs)
 
     def generate(self, logsig, n_samples=1, normalised=False):
         generated = self.generator.generate(logsig, n_samples=n_samples)
-        # print("generated shape:{}".format(generated.shape))
 
-        # if normalised:
-        #     return generated
+        if normalised:
+            return generated
 
-        # if n_samples is None:
-        #     return self.scaler.inverse_transform(generated.reshape(1, -1))[0]
+        if n_samples is None:
+            return self.scaler.inverse_transform(generated.reshape(1, -1))[0]
 
-        # return self.scaler.inverse_transform(generated)
-
-        # print("generated shape:{}".format(generated.shape))
-        return generated
+        return self.scaler.inverse_transform(generated)

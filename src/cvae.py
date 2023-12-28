@@ -113,16 +113,15 @@ class CVAE(nn.Module):
             optimizer.step()
 
             if loss.item()==min(loss_record):
-                print("Epoch {}: {:.4f}".format(epoch+1,loss.item()))
-                print("saving model with loss {:.4f}".format(loss.item()))
+                print("Epoch {} saving model with loss {:.4f}".format(epoch+1,loss.item()))
                 torch.save(self.state_dict(), "%s" % self.MODEL_NAME)
                 stop = 0
-
-            if is_stop(stop):
-                print("Early stop at {}".format(epoch+1))
-                break
             else:
-                stop += 1
+                if is_stop(stop):
+                    print("Early stop at {}".format(epoch+1))
+                    break
+                else:
+                    stop += 1
 
     def generate(self, cond, n_samples=None):
 
@@ -148,4 +147,4 @@ class CVAE(nn.Module):
         if n_samples is None:
             return generated_samples[0]
 
-        return generated_samples
+        return generated_samples.numpy()

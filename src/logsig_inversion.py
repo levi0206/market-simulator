@@ -61,6 +61,8 @@ class Organism:
         return tosig.stream2logsig(self.path, order)
 
     def loss(self, sig, order):
+        print("sig shape: {}".format(sig.shape))
+        print("self.logsignature(order) shape: {}".format(self.logsignature(order).shape))
         diff = np.abs((sig - self.logsignature(order)) / sig)
         diff /= 1 + np.arange(len(sig))
         return np.mean(diff)
